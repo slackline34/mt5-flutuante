@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0B0F14">
+<title>Flutuante MT5</title>
+<style>
+:root{
+  --bg:#0B0F14; --card:#151B23; --line:#263040; --ink:#E8EDF3; --muted:#8A96A6;
+  --up:#22C55E; --down:#EF4444; --flat:#CBD5E1; --accent:#3B82F6;
+  color-scheme: dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+  font-family:-apple-system,"SF Pro Text",system-ui,"Segoe UI",Roboto,sans-serif}
+body{padding:calc(env(safe-area-inset-top,0px) + 16px) 16px calc(env(safe-area-inset-bottom,0px) + 16px)}
+main{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+h1{font-size:1.1rem;margin:0;color:var(--muted);font-weight:600;letter-spacing:.02em}
+.big{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:22px 18px;text-align:center}
+#valor{font-size:clamp(2.6rem,14vw,4.2rem);font-weight:800;font-variant-numeric:tabular-nums;line-height:1.05;letter-spacing:-.02em}
+#info{color:var(--muted);margin-top:8px;font-size:.95rem;font-variant-numeric:tabular-nums}
+#estado{display:inline-flex;align-items:center;gap:6px;font-size:.85rem;color:var(--muted);margin-top:10px}
+#estado i{width:8px;height:8px;border-radius:50%;background:var(--muted);display:inline-block}
+#estado.ok i{background:var(--up)} #estado.off i{background:var(--down)}
+button{font:inherit;font-weight:700;font-size:1.05rem;border:0;border-radius:14px;padding:16px;width:100%;
+  background:var(--accent);color:#fff;cursor:pointer}
+button.sec{background:var(--card);color:var(--ink);border:1px solid var(--line);font-size:.95rem;padding:12px}
+button:disabled{opacity:.5}
+details{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px}
+summary{cursor:pointer;color:var(--muted);font-size:.95rem}
+label{display:block;font-size:.82rem;color:var(--muted);margin:12px 0 4px}
+input{width:100%;font:inherit;font-size:16px;padding:11px 12px;border-radius:10px;border:1px solid var(--line);
+  background:var(--bg);color:var(--ink)}
+.hint{color:var(--muted);font-size:.8rem;line-height:1.45;margin:8px 0 0}
+#msg{color:var(--muted);font-size:.85rem;text-align:center;min-height:1.2em}
+canvas,video{position:absolute;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none}
+</style>
+</head>
+<body>
+<main>
+  <h1>FLUTUANTE MT5</h1>
+
+  <div class="big">
+    <div id="valor">—</div>
+    <div id="info">aguardando dados…</div>
+    <div id="estado"><i></i><span>desconectado</span></div>
+  </div>
+
+  <button id="pip" type="button">Abrir janela flutuante</button>
+  <div id="msg"></div>
+
+  <details id="cfg">
+    <summary>Configurações</summary>
+    <label for="url">URL do banco (mt5-flutuante)</label>
+    <input id="url" autocomplete="off" spellcheck="false" inputmode="url"
+      value="https://mt5-flutuante-default-rtdb.asia-southeast1.firebasedatabase.app">
+    <label for="path">Caminho secreto do flutuante</label>
+    <input id="path" autocomplete="off" spellcheck="false" placeholder="cole aqui o caminho">
+    <p class="hint">Fica salvo só neste aparelho. O caminho nunca vai no código da página.</p>
+    <div style="margin-top:12px"><button class="sec" id="salvar" type="button">Salvar e conectar</button></div>
+  </details>
+</main>
+
+<canvas id="cv" width="480" height="160"></canvas>
+<video id="vd" muted playsinline autoplay></video>
+
+<script>
+(function(){
+  var KEY = 'mt5-flutuante-cfg';
+  var urlIn = document.getElementById('url');
+  var pathIn = document.getElementById('path');
+  var valorEl = document.getElementById('valor');
+  var infoEl = document.getElementById('info');
+  var estadoEl = document.getElementById('estado');
+  var msgEl = document.getElementById('msg');
+  var cv = document.getElementById('cv');
+  var ctx = cv.getContext('2d');
+  var vd = document.getElementById('vd');
+
+  var dados = null;        // {p, n, m, t}
+  var recebidoEm = 0;      // hora local em que chegou o último dado
+  var conectado = false;
+  var es = null;
+  var streamPronto = false;
+
+  // ---------- Config ----------
+  function carregar(){
+    try{
+      var s = JSON.parse(localStorage.getItem(KEY) || '{}');
+      if(s.url) urlIn.value = s.url;
+      if(s.path) pathIn.value = s.path;
+    }catch(e){}
+  }
+  function salvar(){
+    try{ localStorage.setItem(KEY, JSON.stringify({url:urlIn.value.trim(), path:pathIn.value.trim()})); }catch(e){}
+  }
+
+  // ---------- Firebase (escuta: só recebe quando muda) ----------
+  function conectar(){
+    if(es){ es.close(); es = null; }
+    var base = urlIn.value.trim().replace(/\/+$/,'');
+    var path = pathIn.value.trim();
+    if(!base || !path){
+      document.getElementById('cfg').open = true;
+      msgEl.textContent = 'Cole o caminho secreto do flutuante nas Configurações.';
+      return;
+    }
+    es = new EventSource(base + '/' + encodeURIComponent(path) + '/status.json');
+    es.addEventListener('open', function(){ conectado = true; atualizar(); });
+    es.addEventListener('error', function(){ conectado = false; atualizar(); });
+    es.addEventListener('put', receber);
+    es.addEventListener('patch', receber);
+    es.addEventListener('cancel', function(){
+      conectado = false; msgEl.textContent = 'Acesso negado: confira o caminho e as regras.'; atualizar();
+    });
+  }
+  function receber(ev){
+    try{
+      var msg = JSON.parse(ev.data);
+      if(msg.path === '/' && ev.type === 'put'){
+        dados = msg.data;
+      }else{
+        dados = dados || {};
+        var chave = msg.path.replace(/^\//,'');
+        if(ev.type === 'patch' && msg.path === '/'){ Object.assign(dados, msg.data); }
+        else if(chave){ dados[chave] = msg.data; }
+      }
+      recebidoEm = Date.now();
+      conectado = true;
+      msgEl.textContent = '';
+      atualizar();
+    }catch(e){}
+  }
+
+  // ---------- Formatação ----------
+  function fmt(p, m){
+    if(typeof p !== 'number') return '—';
+    var semCasas = (m === 'JPY');
+    var s;
+    try{
+      s = new Intl.NumberFormat('ja-JP', {style:'currency', currency: m || 'JPY',
+        minimumFractionDigits: semCasas ? 0 : 2, maximumFractionDigits: semCasas ? 0 : 2}).format(Math.abs(p));
+    }catch(e){ s = Math.abs(p).toFixed(semCasas ? 0 : 2); }
+    return (p > 0 ? '+' : p < 0 ? '−' : '') + s;
+  }
+  function cor(p){ return p > 0 ? '#22C55E' : p < 0 ? '#EF4444' : '#CBD5E1'; }
+  function idade(){
+    if(!recebidoEm) return null;
+    return Math.max(0, Math.round((Date.now() - recebidoEm) / 1000));
+  }
+  function semSinal(){
+    var a = idade();
+    return !conectado || a === null || a > 40;   // EA manda "batimento" a cada 30 s
+  }
+
+  // ---------- Desenho (página + canvas do PiP) ----------
+  function atualizar(){
+    var p = dados && dados.p, n = dados && dados.n, m = dados && dados.m;
+    var a = idade();
+    var off = semSinal();
+
+    valorEl.textContent = fmt(p, m);
+    valorEl.style.color = off ? 'var(--muted)' : cor(p);
+    infoEl.textContent = (typeof n === 'number' ? n + (n === 1 ? ' posição' : ' posições') : 'aguardando dados…')
+      + (a !== null ? ' · há ' + a + ' s' : '');
+    estadoEl.className = off ? 'off' : 'ok';
+    estadoEl.querySelector('span').textContent = off ? 'sem sinal do PC' : 'ao vivo';
+
+    desenhar(p, n, m, a, off);
+  }
+
+  function desenhar(p, n, m, a, off){
+    var W = cv.width, H = cv.height;
+    ctx.fillStyle = '#0B0F14';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = off ? '#8A96A6' : cor(p);
+    ctx.font = '800 76px -apple-system, system-ui, sans-serif';
+    ctx.fillText(fmt(p, m), W/2, H*0.42);
+
+    ctx.fillStyle = off ? '#EF4444' : '#8A96A6';
+    ctx.font = '600 26px -apple-system, system-ui, sans-serif';
+    var linha = off ? 'sem sinal do PC'
+      : (typeof n === 'number' ? n + (n === 1 ? ' posição' : ' posições') : '') + (a !== null ? '  ·  há ' + a + ' s' : '');
+    ctx.fillText(linha, W/2, H*0.82);
+  }
+
+  // Redesenha sempre (o PiP precisa de quadros novos, e o "há X s" anda)
+  setInterval(atualizar, 500);
+
+  // ---------- Picture-in-Picture ----------
+  function prepararStream(){
+    if(streamPronto) return true;
+    if(!cv.captureStream){ return false; }
+    vd.srcObject = cv.captureStream(4);
+    streamPronto = true;
+    return true;
+  }
+
+  document.getElementById('pip').addEventListener('click', function(){
+    atualizar();
+    if(!prepararStream()){
+      msgEl.textContent = 'Este navegador não suporta a janela flutuante. Abra no Safari.';
+      return;
+    }
+    var p = vd.play();
+    var abrir = function(){
+      try{
+        if(document.pictureInPictureElement){ document.exitPictureInPicture(); return; }
+        if(vd.requestPictureInPicture){
+          vd.requestPictureInPicture().catch(function(){ tentarWebkit(); });
+        }else{
+          tentarWebkit();
+        }
+      }catch(e){ tentarWebkit(); }
+    };
+    if(p && p.then){ p.then(abrir, abrir); } else { abrir(); }
+  });
+
+  function tentarWebkit(){
+    try{
+      if(vd.webkitSupportsPresentationMode && vd.webkitSupportsPresentationMode('picture-in-picture')){
+        vd.webkitSetPresentationMode('picture-in-picture');
+        return;
+      }
+    }catch(e){}
+    msgEl.textContent = 'Não foi possível abrir a janela flutuante neste aparelho.';
+  }
+
+  vd.addEventListener('enterpictureinpicture', function(){
+    document.getElementById('pip').textContent = 'Fechar janela flutuante';
+    msgEl.textContent = 'Pode ir para o MT5. A janela fica por cima.';
+  });
+  vd.addEventListener('leavepictureinpicture', function(){
+    document.getElementById('pip').textContent = 'Abrir janela flutuante';
+    msgEl.textContent = '';
+  });
+
+  document.getElementById('salvar').addEventListener('click', function(){
+    salvar(); conectar(); document.getElementById('cfg').open = false;
+  });
+
+  carregar();
+  atualizar();
+  conectar();
+})();
+</script>
+</body>
+</html>
