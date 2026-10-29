@@ -35,7 +35,10 @@ input{width:100%;font:inherit;font-size:16px;padding:11px 12px;border-radius:10p
   background:var(--bg);color:var(--ink)}
 .hint{color:var(--muted);font-size:.8rem;line-height:1.45;margin:8px 0 0}
 #msg{color:var(--muted);font-size:.85rem;text-align:center;min-height:1.2em}
-canvas,video{position:absolute;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none}
+canvas{position:absolute;left:-9999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none}
+#vd{width:100%;aspect-ratio:3/1;background:#0B0F14;border-radius:14px;border:1px solid var(--line);display:none}
+#vd.on{display:block}
+.passos{color:var(--muted);font-size:.85rem;line-height:1.5;margin:0;padding-left:18px}
 </style>
 </head>
 <body>
@@ -48,8 +51,13 @@ canvas,video{position:absolute;left:-9999px;top:0;width:2px;height:2px;opacity:0
     <div id="estado"><i></i><span>desconectado</span></div>
   </div>
 
+  <video id="vd" muted playsinline autoplay autopictureinpicture controls></video>
   <button id="pip" type="button">Abrir janela flutuante</button>
   <div id="msg"></div>
+  <ol class="passos" id="passos" style="display:none">
+    <li>Se a janelinha não aparecer sozinha, toque no ícone de PiP (dois retângulos) no vídeo acima.</li>
+    <li>Ou, com o vídeo tocando, deslize de baixo para cima para sair do Safari: o iPhone vira PiP automaticamente.</li>
+  </ol>
 
   <details id="cfg">
     <summary>Configurações</summary>
@@ -64,7 +72,6 @@ canvas,video{position:absolute;left:-9999px;top:0;width:2px;height:2px;opacity:0
 </main>
 
 <canvas id="cv" width="480" height="160"></canvas>
-<video id="vd" muted playsinline autoplay></video>
 
 <script>
 (function(){
@@ -207,6 +214,8 @@ canvas,video{position:absolute;left:-9999px;top:0;width:2px;height:2px;opacity:0
       msgEl.textContent = 'Este navegador não suporta a janela flutuante. Abra no Safari.';
       return;
     }
+    vd.classList.add('on');
+    document.getElementById('passos').style.display = 'block';
     var p = vd.play();
     var abrir = function(){
       try{
@@ -228,7 +237,7 @@ canvas,video{position:absolute;left:-9999px;top:0;width:2px;height:2px;opacity:0
         return;
       }
     }catch(e){}
-    msgEl.textContent = 'Não foi possível abrir a janela flutuante neste aparelho.';
+    msgEl.textContent = 'Use o ícone de PiP no vídeo, ou saia do Safari com o vídeo tocando.';
   }
 
   vd.addEventListener('enterpictureinpicture', function(){
